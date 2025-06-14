@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>P2P Connect Messenger</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-100 min-h-screen flex items-center justify-center">
+<!-- Modal for username and name -->
+<div id="userModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
+    <div class="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
+        <h2 class="text-xl font-bold text-purple-700 mb-4 text-center">Welcome to P2P Connect Messenger</h2>
+        <form id="userForm" class="flex flex-col gap-4">
+            <div>
+                <label class="block text-gray-700 font-medium mb-1">Username
+                    <input type="text" id="modalUsername" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                </label>
+            </div>
+            <div>
+                <label class="block text-gray-700 font-medium mb-1">Name
+                    <input type="text" id="modalName" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                </label>
+            </div>
+            <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2 rounded-lg transition">Continue</button>
+        </form>
+    </div>
+</div>
+<div id="chat" class="bg-white shadow-xl rounded-2xl w-full max-w-2xl p-0 flex h-[600px]" style="display:none;">
+    <!-- Sidebar -->
+    <div class="w-1/3 bg-purple-50 rounded-l-2xl flex flex-col border-r border-gray-200">
+        <div class="p-6 border-b border-gray-200">
+            <div class="text-xl font-bold text-purple-700 text-center mb-4">P2P Connect Messenger</div>
+            <div class="flex items-center gap-3 mb-2">
+                <div id="userAvatar" class="bg-purple-500 flex items-center justify-center rounded-full w-9 h-9 text-white font-bold text-lg shadow"></div>
+                <span id="displayName" class="font-semibold text-gray-800"></span>
+            </div>
+            <span class="text-xs text-gray-400" id="displayUsername"></span>
+        </div>
+        <div class="flex-1 overflow-y-auto" id="chatList"></div>
+        <div class="p-4 border-t border-gray-200">
+            <label class="block text-gray-700 font-medium mb-1">Chat with
+                <input type="text" id="toUser" class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" placeholder="Enter username..." />
+            </label>
+            <button onclick="startChat()" class="mt-2 w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2 rounded-lg transition">Start Chat</button>
+        </div>
+    </div>
+    <!-- Main Chat Area -->
+    <div class="flex-1 flex flex-col">
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50 flex flex-col gap-2" id="messagesContainer"></div>
+        <div id="input" class="flex gap-2 p-6 border-t border-gray-200">
+            <input type="text" id="message" placeholder="Type a message..." class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" />
+            <button onclick="sendMessage()" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2 rounded-lg transition">Send</button>
+        </div>
+    </div>
+</div>
+<script>
+    let stompClient = null;
+    let username = '';
+    let displayName = '';
+    let activeChats = [];
+    let chatMessages = {};
+    let activeTab = null;
+
+    // Modal logic
+    document.getElementById('userForm').onsubmit = function(e) {
+        e.preventDefault();
+        username = document.getElementById('modalUsername').value.trim();
+        displayName = document.getElementById('modalName').value.trim();
+        if (!username || !displayName) return;
+        document.getElementById('userModal').style.display = 'none';
+        document.getElementById('chat').style.display = '';
+        document.getElementById('displayName').textContent = displayName;
+        document.getElementById('displayUsername').textContent = '@' + username;
+        document.getElementById('userAvatar').textContent = getUserInitial(displayName);
+        document.getElementById('userAvatar').className = getUserColor(username) + ' flex items-center justify-center rounded-full w-9 h-9 text-white font-bold text-lg shadow';
+        connect();
+    };
+
+    function connect() {
+        if (!username) return;
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({user: username}, function (frame) {
+            stompClient.subscribe('/user/' + username + '/queue/messages', function (message) {
+                const msg = JSON.parse(message.body);
+                console.log(msg);
+                if (!activeChats.includes(msg.sender)) {
+                    activeChats.push(msg.sender);
+                    chatMessages[msg.sender] = [];
+                }
+                chatMessages[msg.sender].push({ ...msg, incoming: true });
+                if (!activeTab) {
+                    setActiveTab(msg.sender);
+                } else if (activeTab === msg.sender) {
+                    renderMessages();
+                }
+                renderChatList();
+            });
+        });
+    }
+
+    async function checkPresence(user) {
+        const resp = await fetch(`/api/presence?username=${encodeURIComponent(user)}`);
+        if (!resp.ok) return false;
+        const data = await resp.json();
+        return data.online;
+    }
+
+    async function fetchMessages(user) {
+        const resp = await fetch(`/api/messages?sender=${encodeURIComponent(username)}&recivier=${encodeURIComponent(user)}&page=0&size=30`);
+        if (!resp.ok) return [];
+        const data = await resp.json();
+        return data.content || [];
+    }
+
+    async function startChat() {
+        const to = document.getElementById('toUser').value;
+        if (!to || to === username) return;
+        if (!activeChats.includes(to)) {
+            activeChats.push(to);
+            chatMessages[to] = [];
+        }
+        setActiveTab(to);
+        renderChatList();
+        document.getElementById('toUser').value = '';
+        // Check presence and fetch history
+        updatePresenceDot(to);
+        if (await checkPresence(to)) {
+            const history = await fetchMessages(to);
+            chatMessages[to] = history.map(m => ({
+                from: m.sender,
+                to: m.recivier,
+                content: m.content,
+                incoming: m.sender !== username
+            }));
+            renderMessages();
+        }
+    }
+
+    async function updatePresenceDot(user) {
+        const isOnline = await checkPresence(user);
+        const dot = document.getElementById(`presence-dot-${user}`);
+        if (dot) {
+            dot.className = `w-3 h-3 rounded-full inline-block mr-2 ${isOnline ? 'bg-green-500' : 'bg-red-500'}`;
+        }
+    }
+
+    function setActiveTab(user) {
+        activeTab = user;
+        renderMessages();
+        renderChatList();
+        updatePresenceDot(user);
+        // Optionally, fetch history again on focus if needed
+    }
+
+    function sendMessage() {
+        if (!activeTab) return;
+        const content = document.getElementById('message').value;
+        if (!content) return;
+        stompClient.send('/app/chat', {}, JSON.stringify({from: username, to: activeTab, content: content}));
+        if (!chatMessages[activeTab]) chatMessages[activeTab] = [];
+        chatMessages[activeTab].push({from: username, to: activeTab, content: content, incoming: false});
+        renderMessages();
+        renderChatList();
+        document.getElementById('message').value = '';
+    }
+
+    // Send message on Enter key
+    document.getElementById('message').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            sendMessage();
+            e.preventDefault();
+        }
+    });
+
+    function getUserColor(user) {
+        const colors = [
+            'bg-purple-500', 'bg-blue-500', 'bg-pink-500', 'bg-green-500', 'bg-yellow-500', 'bg-red-500', 'bg-indigo-500', 'bg-teal-500', 'bg-orange-500', 'bg-cyan-500'
+        ];
+        let hash = 0;
+        for (let i = 0; i < user.length; i++) {
+            hash = user.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return colors[Math.abs(hash) % colors.length];
+    }
+
+    function getUserInitial(name) {
+        return name.charAt(0).toUpperCase();
+    }
+
+    function renderMessages() {
+        const messagesContainer = document.getElementById('messagesContainer');
+        messagesContainer.innerHTML = '';
+        if (!activeTab || !chatMessages[activeTab]) return;
+        chatMessages[activeTab].forEach(message => {
+            const msg = document.createElement('div');
+            msg.className = message.incoming
+                ? 'self-start bg-gray-200 text-gray-700 px-4 py-2 rounded-lg shadow max-w-[70%]' 
+                : 'self-end bg-purple-100 text-purple-800 px-4 py-2 rounded-lg shadow max-w-[70%]';
+            msg.textContent = (message.incoming ? activeTab : displayName) + ': ' + message.content;
+            messagesContainer.appendChild(msg);
+        });
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+
+    function renderChatList() {
+        const chatList = document.getElementById('chatList');
+        chatList.innerHTML = '';
+        activeChats.forEach(user => {
+            const item = document.createElement('div');
+            item.className = 'cursor-pointer flex items-center gap-3 px-4 py-3 hover:bg-purple-100 ' + (activeTab === user ? 'bg-purple-200 font-bold' : '');
+            // Presence dot
+            const presenceDot = document.createElement('span');
+            presenceDot.id = `presence-dot-${user}`;
+            presenceDot.className = 'w-3 h-3 rounded-full inline-block mr-2 bg-gray-300';
+            // Avatar
+            const avatar = document.createElement('div');
+            avatar.className = getUserColor(user) + ' flex items-center justify-center rounded-full w-9 h-9 text-white font-bold text-lg shadow';
+            avatar.textContent = getUserInitial(user);
+            // Username
+            const name = document.createElement('span');
+            name.textContent = user;
+            item.appendChild(presenceDot);
+            item.appendChild(avatar);
+            item.appendChild(name);
+            item.onclick = async () => {
+                setActiveTab(user);
+                await updatePresenceDot(user);
+            };
+            chatList.appendChild(item);
+            // Update presence dot after rendering
+            updatePresenceDot(user);
+        });
+    }
+</script>
+</body>
+</html>
