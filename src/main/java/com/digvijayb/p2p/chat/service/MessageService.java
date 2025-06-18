@@ -26,9 +26,17 @@ public class MessageService {
         entity.setContent(content);
         entity.setTimestamp(Instant.now());
         entity.setChatPairId(getChatPairId(sender, recivier));
+        entity.setStatus(ChatMessageEntity.Status.PENDING);
         ChatMessageEntity saved = chatMessageRepository.save(entity);
         kafkaTemplate.send("message-received-event", saved);
         return saved;
+    }
+
+    public void updateMessageStatus(UUID messageId, ChatMessageEntity.Status status) {
+        chatMessageRepository.findById(messageId).ifPresent(msg -> {
+            msg.setStatus(status);
+            chatMessageRepository.save(msg);
+        });
     }
 
     public Page<ChatMessageEntity> getMessages(String sender, String recivier, Pageable pageable) {

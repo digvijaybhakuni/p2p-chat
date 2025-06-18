@@ -78,26 +78,58 @@
         connect();
     };
 
-    function connect() {
+    function sendAck(messageId, status, sender) {
+        console.log('sending ack', {messageId, status, sender});
+        if (stompClient && stompClient.connected) {
+            stompClient.send('/app/ack', {}, JSON.stringify({messageId, user: sender, status}));
+        } else {
+            let pendingAcks = JSON.parse(localStorage.getItem('pendingAcks') || '[]');
+            pendingAcks.push({messageId, user: sender, status});
+            localStorage.setItem('pendingAcks', JSON.stringify(pendingAcks));
+        }
+    }
+
+    async function sendPendingAcks() {
+        let pendingAcks = JSON.parse(localStorage.getItem('pendingAcks') || '[]');
+        for (const ack of pendingAcks) {
+            await fetch('/api/message/ack', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(ack)
+            });
+        }
+        localStorage.removeItem('pendingAcks');
+    }
+
+    // Call sendPendingAcks when connecting
+    async function connect() {
         if (!username) return;
         const socket = new SockJS('/ws');
         stompClient = Stomp.over(socket);
         stompClient.connect({user: username}, function (frame) {
             stompClient.subscribe('/user/' + username + '/queue/messages', function (message) {
-                const msg = JSON.parse(message.body);
-                console.log(msg);
-                if (!activeChats.includes(msg.sender)) {
-                    activeChats.push(msg.sender);
-                    chatMessages[msg.sender] = [];
+                const msg = mapMessage(JSON.parse(message.body));
+                // Send DELIVERED ack to sender
+                console.log({msg});
+                if (msg.id) sendAck(msg.id, 'DELIVERED', msg.from);
+                if (!activeChats.includes(msg.from)) {
+                    activeChats.push(msg.from);
+                    chatMessages[msg.from] = [];
                 }
-                chatMessages[msg.sender].push({ ...msg, incoming: true });
+                chatMessages[msg.from].push({ ...msg, incoming: true });
                 if (!activeTab) {
-                    setActiveTab(msg.sender);
-                } else if (activeTab === msg.sender) {
+                    setActiveTab(msg.from);
+                } else if (activeTab === msg.from) {
                     renderMessages();
                 }
                 renderChatList();
             });
+            // Listen for status updates
+            stompClient.subscribe('/user/' + username + '/queue/message-status', function (message) {
+                const ack = JSON.parse(message.body);
+                handleStatusUpdate(ack);
+            });
+            sendPendingAcks();
         });
     }
 
@@ -133,12 +165,22 @@
                 from: m.sender,
                 to: m.recivier,
                 content: m.content,
-                incoming: m.sender !== username
+                incoming: m.sender !== username,
+                status: m.status
             }));
             renderMessages();
         }
     }
 
+    const mapMessage = m => ({
+                id: m.id,
+                from: m.sender,
+                to: m.recivier,
+                content: m.content,
+                incoming: m.sender !== username,
+                status: m.status
+            });
+    
     async function updatePresenceDot(user) {
         const isOnline = await checkPresence(user);
         const dot = document.getElementById(`presence-dot-${user}`);
@@ -159,13 +201,42 @@
         if (!activeTab) return;
         const content = document.getElementById('message').value;
         if (!content) return;
-        stompClient.send('/app/chat', {}, JSON.stringify({from: username, to: activeTab, content: content}));
-        if (!chatMessages[activeTab]) chatMessages[activeTab] = [];
-        chatMessages[activeTab].push({from: username, to: activeTab, content: content, incoming: false});
-        renderMessages();
-        renderChatList();
-        document.getElementById('message').value = '';
+        sendMessageViaREST({from: username, to: activeTab, content: content})
+            .then(res => {
+                if (!chatMessages[activeTab]) chatMessages[activeTab] = [];
+                chatMessages[activeTab].push({id: res.id, from: username, to: activeTab, content: content, incoming: false});
+                renderMessages();
+                renderChatList();
+                document.getElementById('message').value = '';
+            });
+        // stompClient.send('/app/chat', {}, JSON.stringify({from: username, to: activeTab, content: content}), m => console.log('SENT', m));
+        // if (!chatMessages[activeTab]) chatMessages[activeTab] = [];
+        // chatMessages[activeTab].push({from: username, to: activeTab, content: content, incoming: false});
+        // renderMessages();
+        // renderChatList();
+        // document.getElementById('message').value = '';
     }
+
+    async function sendMessageViaREST(message) {
+        const response = await fetch('/api/messages', {
+            method: 'POST',
+            headers: {
+            'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(message)
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to send message');
+        }
+
+        return await response.json();
+    }
+
+// Usage
+//     sendMessage('Hello, world!')
+//   .then(data => console.log('Message sent:', data))
+//   .catch(error => console.error(error));
 
     // Send message on Enter key
     document.getElementById('message').addEventListener('keydown', function(e) {
@@ -174,6 +245,17 @@
             e.preventDefault();
         }
     });
+
+    // When user reads messages (e.g. on focus or scroll)
+    function markAllRead() {
+        if (!activeTab || !chatMessages[activeTab]) return;
+        chatMessages[activeTab].forEach(msg => {
+            if (msg.incoming && msg.id) sendAck(msg.id, 'READ', activeTab);
+        });
+    }
+    // Call markAllRead when user focuses the chat area
+    document.getElementById('messagesContainer').addEventListener('focus', markAllRead);
+    document.getElementById('messagesContainer').addEventListener('mouseenter', markAllRead);
 
     function getUserColor(user) {
         const colors = [
@@ -190,6 +272,41 @@
         return name.charAt(0).toUpperCase();
     }
 
+    function getStatusIcon(status) {
+        if (status === 'DELIVERED') {
+            return '<svg class="inline w-4 h-4 text-green-500 ml-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+        } else if (status === 'READ') {
+            return '<svg class="inline w-4 h-4 text-blue-500 ml-2" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/><path stroke-linecap="round" stroke-linejoin="round" d="M9 17l4 4L23 11"/></svg>';
+        } else {
+            // Pending: spinner
+            return '<svg class="inline w-4 h-4 text-gray-400 animate-spin ml-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path></svg>';
+        }
+    }
+
+    // Listen for status updates from backend
+    function handleStatusUpdate(ack) {
+        // Update status in chatMessages
+        console.log('update-status', ack);
+        if(chatMessages[activeTab]) {
+            console.log('from ', activeTab);
+                const msgList = chatMessages[activeTab]; //.forEach(msgList => {
+                console.table(msgList)
+                const msgFound = msgList.find(m => m.id === ack.messageId);
+                console.log('messageFound', msgFound);
+                if(msgFound) {
+                    msgFound.status = ack.status
+                    renderMessages();
+                }
+                // msgList.forEach(msg => {
+                //     if (msg.id === ack.messageId) {
+                //         msg.status = ack.status;
+                //     }
+                // });
+            //});
+            renderMessages();
+        }
+    }
+
     function renderMessages() {
         const messagesContainer = document.getElementById('messagesContainer');
         messagesContainer.innerHTML = '';
@@ -198,8 +315,12 @@
             const msg = document.createElement('div');
             msg.className = message.incoming
                 ? 'self-start bg-gray-200 text-gray-700 px-4 py-2 rounded-lg shadow max-w-[70%]' 
-                : 'self-end bg-purple-100 text-purple-800 px-4 py-2 rounded-lg shadow max-w-[70%]';
-            msg.textContent = (message.incoming ? activeTab : displayName) + ': ' + message.content;
+                : 'self-end bg-purple-100 text-purple-800 px-4 py-2 rounded-lg shadow max-w-[70%] flex items-center';
+            let text = (message.incoming ? activeTab : displayName) + ': ' + message.content;
+            if (!message.incoming) {
+                text += getStatusIcon(message.status);
+            }
+            msg.innerHTML = text;
             messagesContainer.appendChild(msg);
         });
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
@@ -209,6 +330,7 @@
         const chatList = document.getElementById('chatList');
         chatList.innerHTML = '';
         activeChats.forEach(user => {
+            console.log('user', user);
             const item = document.createElement('div');
             item.className = 'cursor-pointer flex items-center gap-3 px-4 py-3 hover:bg-purple-100 ' + (activeTab === user ? 'bg-purple-200 font-bold' : '');
             // Presence dot

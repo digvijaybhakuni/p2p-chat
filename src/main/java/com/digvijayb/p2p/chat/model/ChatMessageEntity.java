@@ -26,6 +26,14 @@ public class ChatMessageEntity {
     @Column(name = "recivier", nullable = false)
     private String recivier;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false)
+    private Status status = Status.PENDING;
+
+    public enum Status {
+        PENDING, DELIVERED, READ
+    }
+
     // Getters and setters
     public UUID getId() { return id; }
     public void setId(UUID id) { this.id = id; }
@@ -39,4 +47,6 @@ public class ChatMessageEntity {
     public void setSender(String sender) { this.sender = sender; }
     public String getRecivier() { return recivier; }
     public void setRecivier(String recivier) { this.recivier = recivier; }
+    public Status getStatus() { return status; }
+    public void setStatus(Status status) { this.status = status; }
 }
