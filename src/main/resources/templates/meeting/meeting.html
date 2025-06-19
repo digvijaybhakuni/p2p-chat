@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Join Meeting - P2P Connect</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-100 min-h-screen flex items-center justify-center">
+<div class="bg-white shadow-xl rounded-2xl w-full max-w-3xl p-8 flex flex-col items-center">
+    <h2 class="text-2xl font-bold text-purple-700 mb-4">P2P Connect Meeting Room</h2>
+    <div id="meetingInfo" class="mb-6 text-center text-gray-700"></div>
+    <div class="flex flex-col md:flex-row gap-6 w-full justify-center">
+        <div class="flex flex-col items-center">
+            <video id="localVideo" autoplay playsinline muted class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
+            <div class="mt-2 text-sm text-gray-500">You</div>
+        </div>
+        <div class="flex flex-col items-center">
+            <video id="remoteVideo" autoplay playsinline muted class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
+            <div class="mt-2 text-sm text-gray-500">You</div>
+        </div>
+    </div>
+    <div class="mt-6 flex gap-4">
+        <button id="startCallBtn" class="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-2 rounded-lg transition">Start Call</button>
+        <button id="hangupBtn" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-2 rounded-lg transition hidden">Hang Up</button>
+    </div>
+</div>
+<script>
+// --- Firebase Setup ---
+const firebaseConfig = {
+  apiKey: "",
+  authDomain: "",
+  databaseURL: "",
+  projectId: ""
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const meetingId = '[[${meetingId}]]';
+let username = '';
+let localStream;
+let remoteStream;
+let peerConnection;
+const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+window.addEventListener('DOMContentLoaded', async function() {
+    // Fetch meeting info from backend
+    let meetingInfo;
+    try {
+        console.log(meetingId);
+        const resp = await fetch(`/api/meetings/info?meetingLink=${encodeURIComponent(meetingId)}`);
+        meetingInfo = await resp.json();
+        document.getElementById('meetingInfo').innerHTML =
+            `<div class='font-bold'>Meeting: ${meetingInfo.meetingName}</div>` +
+            `<div>Created by: ${meetingInfo.createdByName} (${meetingInfo.createdByEmail})</div>` +
+            `<div class='text-xs text-gray-400'>Created at: ${new Date(meetingInfo.createdAt).toLocaleString()}</div>`;
+    } catch (e) {
+        alert('Failed to load meeting info.');
+        return;
+    }
+    // Use creator's name/email as username if desired
+    username = meetingInfo.createdByEmail || meetingInfo.createdByName;
+
+    try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        document.getElementById('localVideo').srcObject = localStream;
+    } catch (err) {
+        alert('Please allow access to camera and microphone to join the meeting.');
+        return;
+    }
+    document.getElementById('startCallBtn').onclick = startCall;
+    document.getElementById('hangupBtn').onclick = hangupCall;
+    document.getElementById('hangupBtn').classList.add('hidden');
+    listenForSignals();
+});
+
+async function startCall() {
+    document.body.classList.add('bg-gray-900');
+    document.querySelector('.bg-white').classList.remove('shadow-xl', 'p-8');
+    document.querySelector('.bg-white').classList.add('bg-gray-900', 'p-2');
+    document.querySelector('h2').textContent = 'Meeting in Progress';
+    document.getElementById('meetingInfo').classList.add('hidden');
+    document.getElementById('localVideo').classList.add('ring-4', 'ring-green-400', 'shadow-lg');
+    document.getElementById('remoteVideo').classList.add('ring-4', 'ring-blue-400', 'shadow-lg');
+    document.getElementById('startCallBtn').classList.add('hidden');
+    document.getElementById('hangupBtn').classList.remove('hidden');
+
+    peerConnection = new RTCPeerConnection(config);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    peerConnection.onicecandidate = event => {
+        if (event.candidate) {
+            db.ref(`meetings/${meetingId}/offerCandidates/${username}`).push(event.candidate.toJSON());
+        }
+    };
+    peerConnection.ontrack = event => {
+        if (!remoteStream) {
+            remoteStream = new MediaStream();
+            document.getElementById('remoteVideo').srcObject = remoteStream;
+        }
+        remoteStream.addTrack(event.track);
+    };
+    // Check if offer exists
+    const offerSnap = await db.ref(`meetings/${meetingId}/offer`).get();
+    if (!offerSnap.exists()) {
+        // Create offer
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+        await db.ref(`meetings/${meetingId}/offer`).set({
+            sdp: offer.sdp,
+            type: offer.type,
+            user: username
+        });
+    } else {
+        // Join as answerer
+        const offer = offerSnap.val();
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        await db.ref(`meetings/${meetingId}/answer`).set({
+            sdp: answer.sdp,
+            type: answer.type,
+            user: username
+        });
+        // Listen for offerer's ICE
+        // db.ref(`meetings/${meetingId}/offerCandidates`).on('child_added', snap => {
+        //     if (snap.key !== username) {
+        //         snap.forEach(child => {
+        //             peerConnection.addIceCandidate(new RTCIceCandidate(child.val()));
+        //         });
+        //     }
+        // });
+    }
+}
+
+function listenForSignals() {
+    // Listen for answer
+    db.ref(`meetings/${meetingId}/answer`).on('value', async snapshot => {
+        const answer = snapshot.val();
+        if (answer && answer.user !== username && peerConnection && !peerConnection.remoteDescription) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+    });
+    // Listen for answerer's ICE
+    // db.ref(`meetings/${meetingId}/answerCandidates`).on('child_added', snap => {
+    //     if (snap.key !== username) {
+    //         snap.forEach(child => {
+    //             if (peerConnection) peerConnection.addIceCandidate(new RTCIceCandidate(child.val()));
+    //         });
+    //     }
+    // });
+}
+
+function hangupCall() {
+    if (peerConnection) peerConnection.close();
+    if (localStream) localStream.getTracks().forEach(track => track.stop());
+    if (remoteStream) remoteStream.getTracks().forEach(track => track.stop());
+    document.getElementById('localVideo').srcObject = null;
+    document.getElementById('remoteVideo').srcObject = null;
+    document.getElementById('hangupBtn').classList.add('hidden');
+    document.getElementById('startCallBtn').classList.remove('hidden');
+    // Optionally: Remove meeting data from Firebase
+}
+</script>
+</body>
+</html>

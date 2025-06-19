@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>P2P Connect Meeting</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-100 min-h-screen flex items-center justify-center">
+<!-- Meeting Modal -->
+<div id="meetingUserModal" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-40 z-50">
+    <div class="bg-white rounded-2xl shadow-xl p-8 w-full max-w-sm">
+        <h2 class="text-xl font-bold text-purple-700 mb-4 text-center">Join or Create a Meeting</h2>
+        <form id="meetingUserForm" class="flex flex-col gap-4">
+            <div>
+                <label class="block text-gray-700 font-medium mb-1">Name
+                    <input type="text" id="meetingUserName" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                </label>
+            </div>
+            <div>
+                <label class="block text-gray-700 font-medium mb-1">Email
+                    <input type="email" id="meetingUserEmail" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" />
+                </label>
+            </div>
+            <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2 rounded-lg transition">Continue</button>
+        </form>
+    </div>
+</div>
+<!-- Meeting Creation Form -->
+<div id="meetingCreateForm" class="hidden bg-white shadow-xl rounded-2xl w-full max-w-md p-8 flex flex-col gap-4 items-center">
+    <h2 class="text-2xl font-bold text-purple-700 mb-4">Create a Meeting</h2>
+    <form id="createMeetingForm" class="w-full flex flex-col gap-4">
+        <label class="block text-gray-700 font-medium mb-1">Meeting Name
+            <input type="text" id="meetingName" required class="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-400" />
+        </label>
+        <button type="submit" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold px-5 py-2 rounded-lg transition">Create Meeting</button>
+    </form>
+    <div id="meetingLinkContainer" class="hidden mt-4 text-center">
+        <div class="text-gray-700">Share this link to join:</div>
+        <div id="meetingLink" class="font-mono text-purple-700 text-lg break-all mb-2"></div>
+        <div class="flex justify-center gap-3 mt-2">
+            <button id="joinMeetingBtn" class="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg transition">Join Meeting</button>
+            <button id="shareBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition">Share</button>
+        </div>
+        <div id="shareOptions" class="hidden mt-3 flex flex-col gap-2 items-center">
+            <button onclick="shareViaEmail()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold px-4 py-2 rounded-lg transition">Share via Email</button>
+            <button onclick="shareViaWhatsApp()" class="w-full bg-green-100 hover:bg-green-200 text-green-800 font-semibold px-4 py-2 rounded-lg transition">Share via WhatsApp</button>
+            <button onclick="copyToClipboard()" class="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 font-semibold px-4 py-2 rounded-lg transition">Copy to Clipboard</button>
+        </div>
+    </div>
+</div>
+<script>
+// Meeting system logic
+let meetingUserName = '';
+let meetingUserEmail = '';
+
+window.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('meetingUserModal').style.display = '';
+    document.getElementById('meetingCreateForm').classList.add('hidden');
+});
+
+document.getElementById('meetingUserForm').onsubmit = function(e) {
+    e.preventDefault();
+    meetingUserName = document.getElementById('meetingUserName').value.trim();
+    meetingUserEmail = document.getElementById('meetingUserEmail').value.trim();
+    if (!meetingUserName || !meetingUserEmail) return;
+    document.getElementById('meetingUserModal').style.display = 'none';
+    document.getElementById('meetingCreateForm').classList.remove('hidden');
+};
+
+document.getElementById('createMeetingForm').onsubmit = async function(e) {
+    e.preventDefault();
+    const meetingName = document.getElementById('meetingName').value.trim();
+    if (!meetingName) return;
+    const resp = await fetch(`/api/meetings/create?meetingName=${encodeURIComponent(meetingName)}&name=${encodeURIComponent(meetingUserName)}&email=${encodeURIComponent(meetingUserEmail)}`, { method: 'POST' });
+    if (resp.ok) {
+        const data = await resp.json();
+        document.getElementById('meetingLinkContainer').classList.remove('hidden');
+        const link = window.location.origin + '/meeting/' + data.meetingLink;
+        document.getElementById('meetingLink').textContent = link;
+        document.getElementById('joinMeetingBtn').onclick = function() {
+            window.location.href = '/meeting/' + data.meetingLink;
+        };
+        document.getElementById('shareBtn').onclick = function() {
+            document.getElementById('shareOptions').classList.toggle('hidden');
+        };
+        window.shareMeetingLink = link;
+    }
+};
+
+function shareViaEmail() {
+    const subject = encodeURIComponent('Join my meeting');
+    const body = encodeURIComponent('Join my meeting using this link: ' + window.shareMeetingLink);
+    window.open(`mailto:?subject=${subject}&body=${body}`);
+}
+
+function shareViaWhatsApp() {
+    const text = encodeURIComponent('Join my meeting using this link: ' + window.shareMeetingLink);
+    window.open(`https://wa.me/?text=${text}`);
+}
+
+function copyToClipboard() {
+    navigator.clipboard.writeText(window.shareMeetingLink).then(() => {
+        alert('Meeting link copied to clipboard!');
+    });
+}
+</script>
+</body>
+</html>

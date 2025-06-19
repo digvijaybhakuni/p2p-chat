@@ -1,6 +1,9 @@
 package com.digvijayb.p2p.chat.config;
 
 import com.digvijayb.p2p.chat.service.RedisMessageSubscriber;
+
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,7 +21,16 @@ public class RedisSubscriberConfig {
     public RedisMessageListenerContainer redisContainer(RedisConnectionFactory connectionFactory) {
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
-        container.addMessageListener(subscriber, new PatternTopic("chat"));
+        container.addMessageListener(subscriber, 
+            List.of(new PatternTopic("chat"),
+            new PatternTopic("ack")));
         return container;
     }
+    // @Bean
+    // public RedisMessageListenerContainer redisContainerAck(RedisConnectionFactory connectionFactory) {
+    //     RedisMessageListenerContainer container = new RedisMessageListenerContainer();
+    //     container.setConnectionFactory(connectionFactory);
+    //     container.addMessageListener(subscriber, new PatternTopic("ack"));
+    //     return container;
+    // }
 }

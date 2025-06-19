@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Join Meeting - P2P Connect</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-purple-100 min-h-screen flex items-center justify-center">
+<div class="bg-white shadow-xl rounded-2xl w-full max-w-3xl p-8 flex flex-col items-center">
+    <h2 class="text-2xl font-bold text-purple-700 mb-4">P2P Connect Meeting Room</h2>
+    <div id="meetingInfo" class="mb-6 text-center text-gray-700"></div>
+    <div class="flex flex-col md:flex-row gap-6 w-full justify-center">
+        <div class="flex flex-col items-center">
+            <video id="localVideo" autoplay playsinline muted class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
+            <div class="mt-2 text-sm text-gray-500">You</div>
+        </div>
+        <div class="flex flex-col items-center">
+            <video id="remoteVideo" autoplay playsinline class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
+            <div class="mt-2 text-sm text-gray-500">Remote</div>
+        </div>
+    </div>
+    <div class="mt-6 flex gap-4">
+        <button id="startCallBtn" class="bg-green-600 hover:bg-green-700 text-white font-semibold px-6 py-2 rounded-lg transition">Start Call</button>
+        <button id="hangupBtn" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-2 rounded-lg transition">Hang Up</button>
+    </div>
+</div>
+<script>
+// --- Meeting Info ---
+const meetingId = window.location.pathname.split('/').pop();
+fetch(`/api/meetings/info?meetingLink=${encodeURIComponent(meetingId)}`)
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('meetingInfo').innerHTML =
+            `<div class='font-bold'>Meeting: ${data.meetingName}</div>` +
+            `<div>Created by: ${data.createdByName} (${data.createdByEmail})</div>` +
+            `<div class='text-xs text-gray-400'>Created at: ${new Date(data.createdAt).toLocaleString()}</div>`;
+    });
+
+// --- WebRTC Logic (basic P2P, signaling not implemented here) ---
+let localStream;
+let remoteStream;
+let peerConnection;
+const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+const localVideo = document.getElementById('localVideo');
+const remoteVideo = document.getElementById('remoteVideo');
+const startCallBtn = document.getElementById('startCallBtn');
+const hangupBtn = document.getElementById('hangupBtn');
+
+startCallBtn.onclick = async function() {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideo.srcObject = localStream;
+    peerConnection = new RTCPeerConnection(config);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    peerConnection.ontrack = event => {
+        if (!remoteStream) {
+            remoteStream = new MediaStream();
+            remoteVideo.srcObject = remoteStream;
+        }
+        remoteStream.addTrack(event.track);
+    };
+    // TODO: Add signaling logic here for offer/answer/candidate exchange
+    alert('WebRTC signaling not implemented. This is a UI/UX placeholder.');
+};
+
+hangupBtn.onclick = function() {
+    if (peerConnection) peerConnection.close();
+    if (localVideo.srcObject) localVideo.srcObject.getTracks().forEach(track => track.stop());
+    if (remoteVideo.srcObject) remoteVideo.srcObject.getTracks().forEach(track => track.stop());
+    localVideo.srcObject = null;
+    remoteVideo.srcObject = null;
+};
+</script>
+</body>
+</html>

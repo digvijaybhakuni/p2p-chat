@@ -26,10 +26,10 @@ public class MessageController {
 
     @GetMapping("/api/messages")
     public Page<ChatMessageEntity> getMessages(
-            @RequestParam String sender,
-            @RequestParam String recivier,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size
+            @RequestParam("sender") String sender,
+            @RequestParam("recivier") String recivier,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size
     ) {
         Pageable pageable = PageRequest.of(page, size);
         return messageService.getMessages(sender, recivier, pageable);

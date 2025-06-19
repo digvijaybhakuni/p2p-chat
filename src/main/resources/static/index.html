@@ -123,6 +123,21 @@
                     renderMessages();
                 }
                 renderChatList();
+            }, function(error) {
+                console.error('STOMP Error or Disconnection:', error);
+                if (error.headers && error.headers.message) {
+                    console.error('STOMP Error Message:', error.headers.message);
+                } else {
+                    console.error('Raw Error Object:', error);
+                }
+                setTimeout(function() {
+                    // Reconnect logic
+                    // You might want to try reconnecting after a delay
+                    // or based on a counter to prevent infinite loops
+                    client.connect({user: usernamer}, arguments.callee.caller.arguments[1], arguments.callee.caller.arguments[2]); // Reconnect using same callbacks
+                    // Or, more robustly:
+                    // connectToStomp(); // Call a function that encapsulates your connection logic
+                }, 5000); 
             });
             // Listen for status updates
             stompClient.subscribe('/user/' + username + '/queue/message-status', function (message) {
@@ -166,7 +181,8 @@
                 to: m.recivier,
                 content: m.content,
                 incoming: m.sender !== username,
-                status: m.status
+                status: m.status,
+                id: m.id
             }));
             renderMessages();
         }

@@ -14,7 +14,7 @@ public class PresenceController {
     private PresenceService presenceService;
 
     @GetMapping("/api/presence")
-    public Map<String, Object> isUserOnline(@RequestParam String username) {
+    public Map<String, Object> isUserOnline(@RequestParam("username") String username) {
         boolean online = presenceService.isUserOnline(username);
         Map<String, Object> resp = new HashMap<>();
         resp.put("username", username);
