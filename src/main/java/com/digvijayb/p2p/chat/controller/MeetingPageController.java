@@ -11,9 +11,13 @@ import lombok.extern.slf4j.Slf4j;
 @Controller
 public class MeetingPageController {
     @GetMapping("/meeting/{meetingId}")
-    public String meetingPage(@PathVariable String meetingId, Model model) {
+    public String meetingPage(@PathVariable("meetingId") String meetingId, Model model) {
         log.info("meetingId: {}", meetingId);
         model.addAttribute("meetingId", meetingId);
+        model.addAttribute("fbapiKey", System.getenv("fbapiKey"));
+        model.addAttribute("fbauthDomain", System.getenv("fbauthDomain"));
+        model.addAttribute("fbdatabaseURL", System.getenv("fbdatabaseURL"));
+        model.addAttribute("fbprojectId", System.getenv("fbprojectId"));
         return "meeting/meeting";
     }
 }

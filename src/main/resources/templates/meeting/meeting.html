@@ -6,6 +6,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 </head>
 <body class="bg-gradient-to-br from-blue-50 to-purple-100 min-h-screen flex items-center justify-center">
 <div class="bg-white shadow-xl rounded-2xl w-full max-w-3xl p-8 flex flex-col items-center">
@@ -13,11 +14,11 @@
     <div id="meetingInfo" class="mb-6 text-center text-gray-700"></div>
     <div class="flex flex-col md:flex-row gap-6 w-full justify-center">
         <div class="flex flex-col items-center">
-            <video id="localVideo" autoplay playsinline muted class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
+            <video id="localVideo" autoplay playsinline class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
             <div class="mt-2 text-sm text-gray-500">You</div>
         </div>
         <div class="flex flex-col items-center">
-            <video id="remoteVideo" autoplay playsinline muted class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
+            <video id="remoteVideo" autoplay playsinline class="rounded-lg border border-gray-300 w-64 h-48 bg-black"></video>
             <div class="mt-2 text-sm text-gray-500">Remote</div>
         </div>
     </div>
@@ -29,20 +30,23 @@
 <script>
 // --- Firebase Setup ---
 const firebaseConfig = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",
-  projectId: ""
+  apiKey: "[[${fbapiKey}]]",
+  authDomain: "[[${fbauthDomain}]]",
+  databaseURL: "[[${fbdatabaseURL}]]",
+  projectId: "[[${fbprojectId}]]"
 };
 firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+const db = firebase.firestore();
 
 const meetingId = '[[${meetingId}]]';
 let username = '';
 let localStream;
 let remoteStream;
 let peerConnection;
+const localVideo = document.getElementById('localVideo');
+const remoteVideo = document.getElementById('remoteVideo');
 const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const pc = new RTCPeerConnection(config);
 
 window.addEventListener('DOMContentLoaded', async function() {
     // Fetch meeting info from backend
@@ -63,16 +67,29 @@ window.addEventListener('DOMContentLoaded', async function() {
     username = meetingInfo.createdByEmail || meetingInfo.createdByName;
 
     try {
+        //Setting local and Remote Streams
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        document.getElementById('localVideo').srcObject = localStream;
+        localVideo.srcObject = localStream;
+        remoteStream = new MediaStream();
+        remoteVideo.srcObject = remoteStream;
+
+        // Push tracks from local stream to peer connection
+        localStream.getTracks().forEach(track =>  pc.addTrack(track, localStream));
+
+        // Pull tracks from remote stream, add to video stream
+        pc.ontrack = event =>{
+            event.streams[0].getTracks().forEach(track =>  remoteStream.addTrack(track));
+        };
+                
     } catch (err) {
         alert('Please allow access to camera and microphone to join the meeting.');
         return;
     }
+
     document.getElementById('startCallBtn').onclick = startCall;
     document.getElementById('hangupBtn').onclick = hangupCall;
     document.getElementById('hangupBtn').classList.add('hidden');
-    listenForSignals();
+    // listenForSignals();
 });
 
 async function startCall() {
@@ -86,6 +103,79 @@ async function startCall() {
     document.getElementById('startCallBtn').classList.add('hidden');
     document.getElementById('hangupBtn').classList.remove('hidden');
 
+    const meetingCall = db.collection("calls").doc(meetingId);
+    
+
+    const callData = (await meetingCall.get()).data();
+    // console.log("offer", offer.exists())
+    console.log('callData', callData);
+    if (callData?.offer) {
+        console.log('offer exists do answers');
+        const offerCandidates = meetingCall.collection("offerCandidates");
+        const answerCandidates = meetingCall.collection("answerCandidates");
+        pc.onicecandidate = (event) => {
+            console.log('put answer candidates')
+            event.candidate && answerCandidates.add(event.candidate.toJSON());
+        };
+        const offerDescription = callData.offer;
+        await pc.setRemoteDescription(new RTCSessionDescription(offerDescription));
+        const answerDescription = await pc.createAnswer();
+        await pc.setLocalDescription(answerDescription);
+        const answer = {
+            type: answerDescription.type,
+            sdp: answerDescription.sdp,
+        };
+        await meetingCall.update({ answer });
+        offerCandidates.onSnapshot((snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+            console.log('change', change);
+            if (change.type === "added") {
+                let data = change.doc.data();
+                pc.addIceCandidate(new RTCIceCandidate(data));
+            }
+            });
+        }); 
+
+    }else {
+        console.log('create offers');
+        const offerCandidates = meetingCall.collection("offerCandidates");
+        const answerCandidates = meetingCall.collection("answerCandidates");
+        pc.onicecandidate = (event) => {
+            event.candidate && offerCandidates.add(event.candidate.toJSON());
+        };
+        const offerDescription = await pc.createOffer();
+        await pc.setLocalDescription(offerDescription);
+        const offer = {
+            sdp: offerDescription.sdp,
+            type: offerDescription.type,
+        };            
+        await meetingCall.set({ offer });
+
+        // Listen for remote answer
+        meetingCall.onSnapshot((snapshot) => {
+                const data = snapshot.data();
+                if (!pc.currentRemoteDescription && data?.answer) {
+                const answerDescription = new RTCSessionDescription(data.answer);
+                pc.setRemoteDescription(answerDescription);
+            }
+        });
+
+
+        // When answered, add candidate to peer connection
+        answerCandidates.onSnapshot((snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === "added") {
+                    const candidate = new RTCIceCandidate(change.doc.data());
+                    pc.addIceCandidate(candidate);
+                }
+            });
+        });
+
+    }
+
+
+
+    /*
     peerConnection = new RTCPeerConnection(config);
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     peerConnection.onicecandidate = event => {
@@ -130,7 +220,8 @@ async function startCall() {
         //         });
         //     }
         // });
-    }
+        
+    }*/
 }
 
 function listenForSignals() {
