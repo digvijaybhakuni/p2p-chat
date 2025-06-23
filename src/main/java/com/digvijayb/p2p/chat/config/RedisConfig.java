@@ -26,11 +26,9 @@ public class RedisConfig {
         RedisTemplate<String, ChatMessageEntity> template = new RedisTemplate<>();
         template.setConnectionFactory(factory);
         template.setKeySerializer(new StringRedisSerializer());
-        // Fix: Register JavaTimeModule for Instant serialization
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
-        Jackson2JsonRedisSerializer<ChatMessageEntity> jsonRedisSerializer = new Jackson2JsonRedisSerializer<>(ChatMessageEntity.class);
-        jsonRedisSerializer.setObjectMapper(mapper);
+        Jackson2JsonRedisSerializer<ChatMessageEntity> jsonRedisSerializer = new Jackson2JsonRedisSerializer<>(mapper, ChatMessageEntity.class);
         template.setValueSerializer(jsonRedisSerializer);
         template.setHashKeySerializer(new StringRedisSerializer());
         template.setHashValueSerializer(jsonRedisSerializer);
@@ -43,11 +41,9 @@ public class RedisConfig {
         RedisTemplate<String, MessageAck> template = new RedisTemplate<>();
         template.setConnectionFactory(factory);
         template.setKeySerializer(new StringRedisSerializer());
-        // Fix: Register JavaTimeModule for Instant serialization
         ObjectMapper mapper = new ObjectMapper();
         mapper.registerModule(new JavaTimeModule());
-        Jackson2JsonRedisSerializer<MessageAck> jsonRedisSerializer = new Jackson2JsonRedisSerializer<>(MessageAck.class);
-        jsonRedisSerializer.setObjectMapper(mapper);
+        Jackson2JsonRedisSerializer<MessageAck> jsonRedisSerializer = new Jackson2JsonRedisSerializer<>(mapper,MessageAck.class);
         template.setValueSerializer(jsonRedisSerializer);
         template.setHashKeySerializer(new StringRedisSerializer());
         template.setHashValueSerializer(jsonRedisSerializer);
