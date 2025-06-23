@@ -14,10 +14,10 @@ public class MeetingPageController {
     public String meetingPage(@PathVariable("meetingId") String meetingId, Model model) {
         log.info("meetingId: {}", meetingId);
         model.addAttribute("meetingId", meetingId);
-        model.addAttribute("fbapiKey", System.getenv("fbapiKey"));
-        model.addAttribute("fbauthDomain", System.getenv("fbauthDomain"));
-        model.addAttribute("fbdatabaseURL", System.getenv("fbdatabaseURL"));
-        model.addAttribute("fbprojectId", System.getenv("fbprojectId"));
+        model.addAttribute("fb_apiKey", System.getenv("fb_apiKey"));
+        model.addAttribute("fb_authDomain", System.getenv("fb_authDomain"));
+        model.addAttribute("fb_databaseURL", System.getenv("fb_databaseURL"));
+        model.addAttribute("fb_projectId", System.getenv("fb_projectId"));
         return "meeting/meeting";
     }
 }
